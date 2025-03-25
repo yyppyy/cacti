@@ -1,65 +1,57 @@
 import os
 import re
+import pandas as pd
 
 def process_res(filename):
     patterns = [
-        r"Total dynamic associative search energy/access\s+\(nJ\):\s+(\d+\.\d+)",
-        r"Total dynamic read energy/access\s+\(nJ\):\s+(\d+\.\d+)",
-        r"Data array: Area \(mm2\):\s+(\d+\.\d+)",
-        r"Area efficiency \(Memory cell area/Total area\) - (\d+\.\d+)\s*%",
-        r"Tag array: Area \(mm2\):\s+(\d+\.\d+)",
-        r"Area efficiency \(Memory cell area/Total area\) - (\d+\.\d+)\s*%"
+        "Fully associative cache array: Area \(mm2\): ([\d\.]+)",
+        "Total leakage power of a bank \(mW\): ([\d\.]+)",
+        "Total dynamic read energy per access \(nJ\): ([\d\.]+)",
+        "Total dynamic write energy per access \(nJ\): ([\d\.]+)",
     ]
     
-    results = {}
+    results = []
     
     with open(filename, 'r') as file:
         content = file.read()
-        
-        # Search for each pattern and extract the float
         for pattern in patterns:
             match = re.search(pattern, content)
             if match:
-                results[pattern] = float(match.group(1))
+                results.append(float(match.group(1)))
     
-    # print(len(results))
-    # energy = 0
-    # area = 0
-    energy = results[patterns[0]] + results[patterns[1]]
-    area = results[patterns[2]] * results[patterns[3]] + results[patterns[4]] * results[patterns[5]]
-    
-    return area, energy
+    return results
 
 if __name__ == '__main__':
     os.system('make opt')
-    os.system("./cacti -infile sample_config_files/L1cache.cfg  > res1.txt")
-    os.system("./cacti -infile sample_config_files/procStRlxCnts.cfg  > res2.txt")
-    os.system("./cacti -infile sample_config_files/procUncommittedEpochs.cfg  > res3.txt")
+    os.system("./cacti -infile sample_config_files/L1cache.cfg  > res1.txt 2>/dev/null")
+    os.system("./cacti -infile sample_config_files/procStRlxCnts.cfg  > res2.txt 2>/dev/null")
+    os.system("./cacti -infile sample_config_files/procUncommittedEpochs.cfg  > res3.txt 2>/dev/null")
     
-    os.system("./cacti -infile sample_config_files/LLCcache.cfg  > res4.txt")
-    os.system("./cacti -infile sample_config_files/dirstRlxCnts.cfg  > res5.txt")
-    os.system("./cacti -infile sample_config_files/dirNotifyCnts.cfg  > res6.txt")
-    os.system("./cacti -infile sample_config_files/dirMaxCommittedEpochs.cfg  > res7.txt")
+    os.system("./cacti -infile sample_config_files/LLCcache.cfg  > res4.txt 2>/dev/null")
+    os.system("./cacti -infile sample_config_files/dirstRlxCnts.cfg  > res5.txt 2>/dev/null")
+    os.system("./cacti -infile sample_config_files/dirNotifyCnts.cfg  > res6.txt 2>/dev/null")
+    os.system("./cacti -infile sample_config_files/dirMaxCommittedEpochs.cfg  > res7.txt 2>/dev/null")
     
-    proc_baseline_area, proc_baseline_energy = process_res('res1.txt')
-    proc_area = 0
-    proc_energy = 0
-    for i in range(2, 4):
-        a, e = process_res(f'res{i}.txt')
-        proc_area += a
-        proc_energy += e
-    proc_area /= proc_baseline_area
-    proc_energy /= proc_baseline_energy
-    
-    dir_baseline_area, dir_baseline_energy = process_res('res4.txt')
-    dir_area = 0
-    dir_energy = 0
-    for i in range(5, 8):
-        a, e = process_res(f'res{i}.txt')
-        dir_area += a
-        dir_energy += e
-    dir_area /= dir_baseline_area
-    dir_energy /= dir_baseline_energy    
-    
-    print(f'proc area:{proc_area} energy:{proc_energy}')
-    print(f'dir area:{dir_area} energy:{dir_energy}')
+    components = ['store counter', 'unAck-ed epoch',
+                  'store counter', 'notification counter', 'largest Comm. epoch']
+    res_files = ['res2.txt', 'res3.txt', 'res5.txt', 'res6.txt', 'res7.txt']
+    sizes = ['8', '8', '8*16', '16*16', '8']
+    data = []
+    for component, res_file, size in zip(components, res_files, sizes):
+        area, power, r_energy, w_energy = process_res(res_file)
+        data.append([component, size, area, power, r_energy, w_energy])
+    data.insert(0, ['Processor (total)', '', data[0][2] + data[1][2],
+                    data[0][3] + data[1][3], data[0][4] + data[1][4], data[0][5] + data[1][5],])
+    data.insert(3, ['Directory (total)', '', data[3][2] + data[4][2] + data[5][2],
+                    data[3][3] + data[4][3] + data[5][3], data[3][4] + data[4][4] + data[5][4],
+                    data[3][5] + data[4][5] + data[5][5],])
+    for i,row in enumerate(data):
+        if row[0].find('total') != -1:
+            data[i][4] = ''
+        else:
+            r = row[4]
+            w = row[5]
+            data[i][4] = f'{r}/{w}'
+        data[i] = data[i][:-1]
+    df = pd.DataFrame(data, columns=['Component', 'Size (entries)', 'Area (mm2)', 'Power (mW)', 'Acc. Energy (r/w nJ)'])
+    df.to_csv('../figures/Table 3.csv', index=False)
